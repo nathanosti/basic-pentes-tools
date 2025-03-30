@@ -1,9 +1,36 @@
-echo "[*] Iniciando setup de ferramentas para pentest web (ZSH)..."
+LOG_FILE="$HOME/pentest-web-setup.log"
 
-# Atualização do sistema
-sudo pacman -Syu --noconfirm
+echo "[*] Log iniciado: $(date)" | tee "$LOG_FILE"
 
-# Instalação via pacman
+log() {
+  echo -e "$1" | tee -a "$LOG_FILE"
+}
+
+# Função para instalar pacotes se não estiverem presentes
+install_pacman_pkg() {
+  if ! pacman -Qi "$1" &>/dev/null; then
+    log "[+] Instalando $1 via pacman..."
+    sudo pacman -S --noconfirm "$1" 2>&1 | tee -a "$LOG_FILE"
+  else
+    log "[-] $1 já instalado (pacman). Pulando..."
+  fi
+}
+
+install_yay_pkg() {
+  if ! yay -Qi "$1" &>/dev/null; then
+    log "[+] Instalando $1 via yay..."
+    yay -S --noconfirm "$1" 2>&1 | tee -a "$LOG_FILE"
+  else
+    log "[-] $1 já instalado (yay). Pulando..."
+  fi
+}
+
+log "[*] Iniciando setup de ferramentas para pentest web (ZSH)..."
+
+log "[*] Atualizando pacotes..."
+sudo pacman -Syu --noconfirm 2>&1 | tee -a "$LOG_FILE"
+
+# Pacotes via pacman
 pacman_packages=(
   nmap
   whatweb
@@ -17,15 +44,15 @@ pacman_packages=(
   docker
 )
 
-echo "[*] Instalando pacotes via pacman..."
+log "[*] Instalando pacotes via pacman..."
 for pkg in "${pacman_packages[@]}"; do
-  sudo pacman -S --noconfirm $pkg
+  install_pacman_pkg "$pkg"
 done
 
-# Habilitar Docker
-sudo systemctl enable --now docker
+log "[*] Habilitando Docker..."
+sudo systemctl enable --now docker 2>&1 | tee -a "$LOG_FILE"
 
-# Instalação via yay
+# Pacotes via yay
 yay_packages=(
   burpsuite
   ffuf
@@ -38,42 +65,51 @@ yay_packages=(
   insomnia
 )
 
-echo "[*] Instalando pacotes via yay (AUR)..."
+log "[*] Instalando pacotes via yay (AUR)..."
 for pkg in "${yay_packages[@]}"; do
-  yay -S --noconfirm $pkg
+  install_yay_pkg "$pkg"
 done
 
-# Diretório base para ferramentas manuais
+# Diretório base
 TOOLS_DIR="$HOME/tools"
 mkdir -p "$TOOLS_DIR"
 cd "$TOOLS_DIR"
 
 # XSStrike
 if [ ! -d "$TOOLS_DIR/XSStrike" ]; then
-  echo "[*] Clonando XSStrike..."
-  git clone https://github.com/s0md3v/XSStrike.git
-  cd XSStrike && pip install -r requirements.txt && cd ..
+  log "[*] Clonando XSStrike..."
+  git clone https://github.com/s0md3v/XSStrike.git 2>&1 | tee -a "$LOG_FILE"
+  cd XSStrike && pip install -r requirements.txt 2>&1 | tee -a "$LOG_FILE"
+  cd ..
+else
+  log "[-] XSStrike já está presente. Pulando..."
 fi
 
 # AutoRecon
 if [ ! -d "$TOOLS_DIR/AutoRecon" ]; then
-  echo "[*] Clonando AutoRecon..."
-  git clone https://github.com/Tib3rius/AutoRecon.git
-  cd AutoRecon && pip install -r requirements.txt && cd ..
+  log "[*] Clonando AutoRecon..."
+  git clone https://github.com/Tib3rius/AutoRecon.git 2>&1 | tee -a "$LOG_FILE"
+  cd AutoRecon && pip install -r requirements.txt 2>&1 | tee -a "$LOG_FILE"
+  cd ..
+else
+  log "[-] AutoRecon já está presente. Pulando..."
 fi
 
 # SecLists
 if [ ! -d "$TOOLS_DIR/SecLists" ]; then
-  echo "[*] Clonando SecLists..."
-  git clone https://github.com/danielmiessler/SecLists.git "$TOOLS_DIR/SecLists"
+  log "[*] Clonando SecLists..."
+  git clone https://github.com/danielmiessler/SecLists.git "$TOOLS_DIR/SecLists" 2>&1 | tee -a "$LOG_FILE"
+else
+  log "[-] SecLists já está presente. Pulando..."
 fi
 
-# Criar aliases
+# Aliases
 ALIASES_FILE="$HOME/.pentest_aliases"
 SECLISTS="$TOOLS_DIR/SecLists"
 
-echo "[*] Criando aliases em $ALIASES_FILE..."
-cat <<EOF > "$ALIASES_FILE"
+log "[*] Criando aliases personalizados..."
+
+ALIASES_CONTENT=$(cat <<EOF
 alias burp='burpsuite'
 alias ff='ffuf -u https://target.com/FUZZ -w $SECLISTS/Discovery/Web-Content/common.txt'
 alias ffadmin='ffuf -u https://target.com/FUZZ -w $SECLISTS/Discovery/Web-Content/big.txt'
@@ -83,26 +119,41 @@ alias xss='python3 ~/tools/XSStrike/xsstrike.py'
 alias recon='python3 ~/tools/AutoRecon/autorecon.py'
 alias hydraweb='hydra -L $SECLISTS/Usernames/top-usernames-shortlist.txt -P $SECLISTS/Passwords/Common-Credentials/10k-most-common.txt'
 EOF
+)
 
-# Adicionar source ao .zshrc
+# Apenas escreve o arquivo se ele não existir ou estiver diferente
+if [[ ! -f "$ALIASES_FILE" || "$(cat "$ALIASES_FILE")" != "$ALIASES_CONTENT" ]]; then
+  echo "$ALIASES_CONTENT" > "$ALIASES_FILE"
+  log "[+] Aliases criados/atualizados em $ALIASES_FILE"
+else
+  log "[-] Aliases já estão atualizados. Pulando..."
+fi
+
+# Adicionar ao .zshrc
 ZSHRC="$HOME/.zshrc"
 if ! grep -q "source ~/.pentest_aliases" "$ZSHRC"; then
   echo "source ~/.pentest_aliases" >> "$ZSHRC"
-  echo "[*] Aliases adicionados ao $ZSHRC"
+  log "[+] Adicionado 'source ~/.pentest_aliases' ao $ZSHRC"
 else
-  echo "[*] Aliases já presentes no $ZSHRC"
+  log "[-] $ZSHRC já está incluindo os aliases. Pulando..."
 fi
 
-# Detectar Oh My Zsh
+# Oh My Zsh (opcional)
 if [ -d "$HOME/.oh-my-zsh" ]; then
-  echo "[*] Oh My Zsh detectado. Deseja instalar 'zsh-autosuggestions'? (s/n)"
+  log "[*] Oh My Zsh detectado. Deseja instalar 'zsh-autosuggestions'? (s/n)"
   read -r install_plugin
   if [[ "$install_plugin" == "s" ]]; then
-    git clone https://github.com/zsh-users/zsh-autosuggestions \${ZSH_CUSTOM:-~/.oh-my-zsh/custom}/plugins/zsh-autosuggestions
-    sed -i 's/plugins=(\(.*\))/plugins=(\1 zsh-autosuggestions)/' "$ZSHRC"
-    echo "[*] Plugin adicionado ao .zshrc. Recarregue o terminal para aplicar."
+    PLUGIN_DIR="${ZSH_CUSTOM:-$HOME/.oh-my-zsh/custom}/plugins/zsh-autosuggestions"
+    if [ ! -d "$PLUGIN_DIR" ]; then
+      git clone https://github.com/zsh-users/zsh-autosuggestions "$PLUGIN_DIR" 2>&1 | tee -a "$LOG_FILE"
+      sed -i 's/plugins=(\(.*\))/plugins=(\1 zsh-autosuggestions)/' "$ZSHRC"
+      log "[+] Plugin adicionado ao .zshrc"
+    else
+      log "[-] Plugin já instalado. Pulando..."
+    fi
   fi
 fi
 
-echo "[✔] Setup concluído. Rode 'source ~/.zshrc' ou reinicie o terminal para carregar os aliases."
+log "[✔] Setup concluído com sucesso!"
+log "[📄] Log completo salvo em: $LOG_FILE"
 
